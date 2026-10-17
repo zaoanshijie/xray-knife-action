@@ -77,9 +77,18 @@ inputs:
     default: 'true'
 
   port:
-    description: 'Local listen port of the proxy. Serves HTTP and SOCKS5 on the same port.'
+    description: >-
+      Listen port of the HTTP proxy. The HTTP front-end is a small relay that
+      forwards into xray-knife's SOCKS5 listener, so HTTP works no matter which
+      core or inbound mode xray-knife uses.
     required: false
     default: '10809'
+
+  socks-port:
+    description: >-
+      Listen port of the SOCKS5 listener. 0 means "port + 1".
+    required: false
+    default: '0'
 
   rotate:
     description: 'Seconds between automatic node rotations (0 = rotate only on health-check failure).'
@@ -122,17 +131,21 @@ outputs:
   proxy:
     description: 'HTTP proxy URL, e.g. http://127.0.0.1:10809.'
   socks-proxy:
-    description: 'SOCKS5 proxy URL, e.g. socks5://127.0.0.1:10809.'
+    description: 'SOCKS5 proxy URL, e.g. socks5://127.0.0.1:10810.'
   proxy-available:
     description: '"true" when a working proxy was started, otherwise "false".'
   pid:
-    description: 'Process id of the proxy (stopped automatically at the end of the job).'
+    description: 'Process id of the xray-knife SOCKS5 listener (stopped automatically at the end of the job).'
+  relay-pid:
+    description: 'Process id of the HTTP relay (stopped automatically at the end of the job).'
   configs-file:
     description: 'Absolute path of the imported subscription links.'
   valid-file:
     description: 'Absolute path of the working nodes, as written by xray-knife.'
   log-file:
-    description: 'Absolute path of the proxy log.'
+    description: 'Absolute path of the xray-knife proxy log.'
+  relay-log:
+    description: 'Absolute path of the HTTP relay log.'
 
 runs:
   using: 'node24'

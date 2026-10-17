@@ -1,9 +1,10 @@
 'use strict';
 
 /*
- * Post step: stop the proxy that src/index.js started in the background.
- * The process is killed when the job ends so a self-hosted runner never keeps
- * a proxy (and its subscription credentials) alive between jobs.
+ * Post step: stop the two processes src/index.js leaves running in the
+ * background — xray-knife's SOCKS5 listener and the HTTP relay in front of it.
+ * A self-hosted runner must not keep a proxy (and its subscription
+ * credentials) alive between jobs.
  */
 
 const { spawnSync } = require('child_process');
@@ -42,14 +43,25 @@ function stop(pid) {
   return true;
 }
 
-const pid = Number.parseInt(process.env.STATE_pid || '', 10);
-if (!Number.isFinite(pid)) {
-  process.stdout.write('No xray-knife proxy to stop.\n');
-} else {
+const targets = [
+  ['http relay', process.env.STATE_relay_pid],
+  ['xray-knife proxy', process.env.STATE_pid],
+];
+
+let handled = 0;
+for (const [label, rawPid] of targets) {
+  const pid = Number.parseInt(rawPid || '', 10);
+  if (!Number.isFinite(pid)) continue;
+  handled += 1;
   try {
-    const stopped = stop(pid);
-    process.stdout.write(stopped ? `Stopped xray-knife proxy (pid ${pid}).\n` : `xray-knife proxy (pid ${pid}) already exited.\n`);
+    if (stop(pid)) {
+      process.stdout.write(`Stopped ${label} (pid ${pid}).\n`);
+    } else {
+      process.stdout.write(`${label} (pid ${pid}) already exited.\n`);
+    }
   } catch (error) {
-    process.stdout.write(`::warning::could not stop xray-knife proxy (pid ${pid}): ${error.message}\n`);
+    process.stdout.write(`::warning::could not stop ${label} (pid ${pid}): ${error.message}\n`);
   }
 }
+
+if (!handled) process.stdout.write('No proxy process was left running.\n');

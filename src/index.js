@@ -367,59 +367,128 @@ function curlThroughProxy(proxyUrl, targetUrl) {
     ['-fsS', '-m', '20', '--proxy', proxyUrl, '-o', os.devNull, '-w', '%{http_code}', targetUrl],
     { encoding: 'utf8' }
   );
+  const code = (result.stdout || '').trim();
   return {
     ok: result.status === 0,
-    detail: result.status === 0 ? `HTTP ${(result.stdout || '').trim()}` : firstLine(result.stderr) || `curl exited with ${result.status}`,
+    detail: result.status === 0 ? `HTTP ${code || 'ok'}` : firstLine(result.stderr) || `curl exited with ${result.status}`,
   };
 }
 
-async function startProxy(binary, poolFile, port, workdir) {
-  const logFile = path.join(workdir, 'xray-knife-proxy.log');
-  // A custom inbound link keeps the listener unauthenticated. xray's socks
-  // inbound also answers plain HTTP proxy requests, so one port serves both
-  // http:// and socks5:// clients.
-  const args = [
-    'proxy', 'inbound',
-    '-f', poolFile,
-    '--inbound-config', `socks://127.0.0.1:${port}#listener`,
-    '--rotate', String(intInput('rotate', 0)),
-  ];
+async function verifyProxy(proxyUrl, targetUrl, label, attempts = 3) {
+  let check = { ok: false, detail: 'not attempted' };
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    check = curlThroughProxy(proxyUrl, targetUrl);
+    if (check.ok) return check;
+    log(`${label} verification attempt ${attempt}/${attempts} failed: ${check.detail}`);
+    await sleep(2000);
+  }
+  return check;
+}
+
+async function assertPortFree(port, label) {
+  const inUse = await new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    socket.setTimeout(1500);
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+  if (inUse) {
+    throw new Error(
+      `127.0.0.1:${port} is already in use, so the ${label} could not start. ` +
+        'Another proxy (for example a local xray-knife/clash) may own that port; ' +
+        'pass a different "port" (and optionally "socks-port") input.'
+    );
+  }
+}
+
+async function startProxy(binary, poolFile, httpPort, socksPort, workdir) {
+  const xrayLog = path.join(workdir, 'xray-knife-proxy.log');
+  const relayLog = path.join(workdir, 'http-proxy.log');
+  const startTimeout = intInput('start-timeout', 60) * 1000;
 
   describe('Start local proxy');
-  log(`$ xray-knife ${args.join(' ')}`);
-  const fd = fs.openSync(logFile, 'a');
-  const child = spawn(binary, args, { detached: true, stdio: ['ignore', fd, fd], windowsHide: true });
+  await assertPortFree(httpPort, 'HTTP proxy');
+  if (socksPort !== httpPort) await assertPortFree(socksPort, 'SOCKS5 listener');
+
+  // 1. xray-knife's own listener: SOCKS5, no credentials.
+  const xrayArgs = [
+    'proxy', 'inbound',
+    '-f', poolFile,
+    '--inbound-config', `socks://127.0.0.1:${socksPort}#listener`,
+    '--rotate', String(intInput('rotate', 0)),
+  ];
+  log(`$ xray-knife ${xrayArgs.join(' ')}`);
+  const xrayFd = fs.openSync(xrayLog, 'a');
+  const child = spawn(binary, xrayArgs, { detached: true, stdio: ['ignore', xrayFd, xrayFd], windowsHide: true });
   child.unref();
   saveState('pid', child.pid);
 
   try {
-    await waitForPort(port, intInput('start-timeout', 60) * 1000);
+    await waitForPort(socksPort, startTimeout);
   } catch (error) {
-    log(filteredLog(logFile));
+    log(filteredLog(xrayLog));
     endDescribe();
     throw error;
   }
-  log(`Proxy is listening on 127.0.0.1:${port} (pid ${child.pid})`);
+  log(`SOCKS5 listener ready on 127.0.0.1:${socksPort} (pid ${child.pid})`);
 
-  const proxyUrl = `http://127.0.0.1:${port}`;
-  const targetUrl = getInput('test-url') || 'https://cloudflare.com/cdn-cgi/trace';
-  let check = { ok: false, detail: 'not attempted' };
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    check = curlThroughProxy(proxyUrl, targetUrl);
-    if (check.ok) break;
-    log(`proxy verification attempt ${attempt}/3 failed: ${check.detail}`);
-    await sleep(2000);
-  }
+  // 2. HTTP front-end. xray-knife only guarantees SOCKS5: xray-core happens to
+  // sniff HTTP on that port, but sing-box does not and the authenticated
+  // default inbound speaks SOCKS only. The relay makes HTTP work for certain.
+  const relayPath = path.join(__dirname, 'http-proxy.js');
+  const relayArgs = [relayPath, '--listen-port', String(httpPort), '--socks-port', String(socksPort)];
+  log(`$ node ${relayArgs.join(' ')}`);
+  const relayFd = fs.openSync(relayLog, 'a');
+  const relay = spawn(process.execPath, relayArgs, {
+    detached: true,
+    stdio: ['ignore', relayFd, relayFd],
+    windowsHide: true,
+  });
+  relay.unref();
+  saveState('relay_pid', relay.pid);
 
-  if (!check.ok) {
-    log(filteredLog(logFile));
+  try {
+    await waitForPort(httpPort, startTimeout);
+  } catch (error) {
+    log(readTail(relayLog, 10));
     endDescribe();
-    throw new Error(`the proxy started but cannot reach ${targetUrl}: ${check.detail}`);
+    throw error;
+  }
+  log(`HTTP proxy ready on 127.0.0.1:${httpPort} (pid ${relay.pid})`);
+
+  // 3. Prove both front doors actually reach the internet.
+  const httpUrl = `http://127.0.0.1:${httpPort}`;
+  const socksUrl = `socks5://127.0.0.1:${socksPort}`;
+  const targetUrl = getInput('test-url') || 'https://cloudflare.com/cdn-cgi/trace';
+
+  const httpCheck = await verifyProxy(httpUrl, targetUrl, 'HTTP');
+  if (!httpCheck.ok) {
+    log(filteredLog(xrayLog));
+    log(readTail(relayLog, 10));
+    endDescribe();
+    throw new Error(`the HTTP proxy started but cannot reach ${targetUrl}: ${httpCheck.detail}`);
+  }
+  log(`HTTP proxy verified through ${targetUrl} (${httpCheck.detail})`);
+
+  const socksCheck = await verifyProxy(`socks5h://127.0.0.1:${socksPort}`, targetUrl, 'SOCKS5');
+  if (!socksCheck.ok) {
+    warn(`the SOCKS5 listener did not answer a curl check (${socksCheck.detail}); the HTTP proxy is verified and working.`);
+  } else {
+    log(`SOCKS5 listener verified through ${targetUrl} (${socksCheck.detail})`);
   }
 
-  log(`Proxy verified through ${targetUrl} (${check.detail})`);
   endDescribe();
-  return { proxyUrl, pid: child.pid, logFile };
+  return { httpUrl, socksUrl, pid: child.pid, relayPid: relay.pid, xrayLog, relayLog };
 }
 
 // The proxy log contains the node links (credentials), so only show the lines
@@ -495,41 +564,53 @@ async function main() {
 
   const shouldStartProxy = getBoolInput('start-proxy', true);
   const allowEmpty = getBoolInput('allow-empty', false);
-  const proxy = { proxyUrl: '', pid: '', logFile: '' };
+  const proxy = { httpUrl: '', socksUrl: '', pid: '', relayPid: '' };
+
+  const httpPort = intInput('port', 10809);
+  const socksPortInput = intInput('socks-port', 0);
+  const socksPort = socksPortInput > 0 ? socksPortInput : httpPort + 1;
+  if (socksPort === httpPort) {
+    throw new Error('"port" and "socks-port" must differ: the HTTP relay and the SOCKS5 listener are separate processes');
+  }
+  if (socksPort > 65535) {
+    throw new Error(`"socks-port" resolved to ${socksPort}, which is out of range; set it explicitly`);
+  }
 
   if (valid > 0 && shouldStartProxy) {
     try {
-      const started = await startProxy(binary, validFile, intInput('port', 10809), workdir);
-      proxy.proxyUrl = started.proxyUrl;
+      const started = await startProxy(binary, validFile, httpPort, socksPort, workdir);
+      proxy.httpUrl = started.httpUrl;
+      proxy.socksUrl = started.socksUrl;
       proxy.pid = String(started.pid);
-      proxy.logFile = started.logFile;
-      setOutput('proxy', started.proxyUrl);
-      setOutput('socks-proxy', started.proxyUrl.replace('http://', 'socks5://'));
+      proxy.relayPid = String(started.relayPid);
+
+      setOutput('proxy', started.httpUrl);
+      setOutput('socks-proxy', started.socksUrl);
       setOutput('pid', String(started.pid));
-      setOutput('log-file', started.logFile);
+      setOutput('relay-pid', String(started.relayPid));
+      setOutput('log-file', started.xrayLog);
+      setOutput('relay-log', started.relayLog);
       setOutput('proxy-available', 'true');
 
       if (getBoolInput('export-env', false)) {
-        const socksUrl = started.proxyUrl.replace('http://', 'socks5://');
-        for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
-          setEnv(key, key.toLowerCase().includes('all') ? socksUrl : started.proxyUrl);
-        }
+        for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) setEnv(key, started.httpUrl);
+        for (const key of ['ALL_PROXY', 'all_proxy']) setEnv(key, started.socksUrl);
         setEnv('NO_PROXY', 'localhost,127.0.0.1,::1');
         setEnv('no_proxy', 'localhost,127.0.0.1,::1');
         log('Exported proxy environment variables for the following steps.');
       }
 
-      notice(`Proxy ready: ${started.proxyUrl} (${valid} working node(s))`);
+      notice(`Proxy ready: ${started.httpUrl} (HTTP) / ${started.socksUrl} (SOCKS5), ${valid} working node(s)`);
     } catch (error) {
       setOutput('proxy-available', 'false');
-      endSummary(version, total, valid, '');
+      endSummary(version, total, valid, '', '');
       if (!allowEmpty) throw error;
       warn(`continuing without a proxy: ${error.message}`);
     }
   } else if (valid === 0) {
     warn('No working node was found, so no proxy was started.');
     if (!allowEmpty) {
-      endSummary(version, total, 0, '');
+      endSummary(version, total, 0, '', '');
       throw new Error(
         'none of the subscription nodes passed the test. ' +
           'Set "allow-empty: true" to continue anyway, raise "max-delay", or check the subscription.'
@@ -537,15 +618,16 @@ async function main() {
     }
   }
 
-  endSummary(version, total, valid, proxy.proxyUrl);
+  endSummary(version, total, valid, proxy.httpUrl, proxy.socksUrl);
 }
 
-function endSummary(version, total, valid, proxyUrl) {
+function endSummary(version, total, valid, httpUrl, socksUrl) {
   const rows = [
     ['xray-knife', `\`${version}\``],
     ['imported nodes', String(total)],
     ['working nodes', String(valid)],
-    ['proxy', proxyUrl ? `\`${proxyUrl}\`` : '_not started_'],
+    ['http proxy', httpUrl ? `\`${httpUrl}\`` : '_not started_'],
+    ['socks5 proxy', socksUrl ? `\`${socksUrl}\`` : '_not started_'],
   ];
   summary(
     ['### Xray Knife Subscription Proxy', '', '| item | value |', '| --- | --- |', ...rows.map(([k, v]) => `| ${k} | ${v} |`)].join('\n')

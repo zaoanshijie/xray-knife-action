@@ -13,12 +13,17 @@ permissions:
 
 jobs:
   unit:
-    name: unit (platform mapping)
+    name: unit (platform mapping + socks encoding)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: node --check src/index.js && node --check src/cleanup.js && node --check src/platform.js
+      - name: Syntax check
+        run: |
+          for file in src/index.js src/cleanup.js src/platform.js src/socks.js src/http-proxy.js; do
+            node --check "$file"
+          done
       - run: node test/assets.test.js
+      - run: node test/socks.test.js
 
   install:
     name: install (${{ matrix.os }} / ${{ matrix.arch }})
@@ -105,15 +110,12 @@ jobs:
       - name: Serve a subscription and a target page
         run: |
           set -euo pipefail
-          mkdir -p /tmp/sub
-          printf '%s' 'vless://b831381d-6324-4d53-ad4f-8cda48b30811@127.0.0.1:20000?encryption=none&security=none&type=tcp#ci-node' \
-            | base64 -w0 > /tmp/sub/sub.txt
-          printf 'ok-through-the-tunnel\n' > /tmp/sub/target.txt
-          (cd /tmp/sub && nohup python3 -m http.server 18080 >/dev/null 2>&1 &)
+          node test/fixture-server.js 18080 20000 > /tmp/fixture.log 2>&1 &
           for _ in $(seq 1 20); do
-            curl -fsS http://127.0.0.1:18080/target.txt && break
+            curl -fsS http://127.0.0.1:18080/target.txt > /dev/null && break
             sleep 0.5
           done
+          curl -fsS http://127.0.0.1:18080/target.txt
 
       - name: Run the action
         id: xk
@@ -130,27 +132,44 @@ jobs:
           echo "version      = ${{ steps.xk.outputs.version }}"
           echo "total-nodes  = ${{ steps.xk.outputs.total-nodes }}"
           echo "valid-nodes  = ${{ steps.xk.outputs.valid-nodes }}"
-          echo "proxy        = ${{ steps.xk.outputs.proxy }}"
-          echo "socks        = ${{ steps.xk.outputs.socks-proxy }}"
+          echo "http proxy   = ${{ steps.xk.outputs.proxy }}"
+          echo "socks proxy  = ${{ steps.xk.outputs.socks-proxy }}"
           echo "pid          = ${{ steps.xk.outputs.pid }}"
+          echo "relay pid    = ${{ steps.xk.outputs.relay-pid }}"
           test "${{ steps.xk.outputs.total-nodes }}" = "1"
           test "${{ steps.xk.outputs.valid-nodes }}" = "1"
           test "${{ steps.xk.outputs.proxy-available }}" = "true"
+          test "${{ steps.xk.outputs.proxy }}" = "http://127.0.0.1:10809"
+          test "${{ steps.xk.outputs.socks-proxy }}" = "socks5://127.0.0.1:10810"
           test -s "${{ steps.xk.outputs.valid-file }}"
+          test -s "${{ steps.xk.outputs.log-file }}"
+          test -s "${{ steps.xk.outputs.relay-log }}"
 
-      - name: Use the HTTP proxy
+      - name: Use the HTTP proxy (plain http)
         run: |
           set -euo pipefail
           body=$(curl -fsS --proxy "${{ steps.xk.outputs.proxy }}" http://127.0.0.1:18080/target.txt)
           echo "body: $body"
-          test "$body" = "ok-through-the-tunnel"
+          echo "$body" | grep -q '^ok-through-the-tunnel GET /target.txt'
+
+      - name: Use the HTTP proxy (POST body)
+        run: |
+          set -euo pipefail
+          body=$(curl -fsS --proxy "${{ steps.xk.outputs.proxy }}" -X POST -d 'ping=1' http://127.0.0.1:18080/echo)
+          echo "body: $body"
+          echo "$body" | grep -q '^ok-through-the-tunnel POST /echo body=6'
+
+      - name: Use the HTTP proxy (https via CONNECT)
+        run: |
+          set -euo pipefail
+          curl -fsS -m 30 --proxy "${{ steps.xk.outputs.proxy }}" https://api.ipify.org && echo
 
       - name: Use the SOCKS5 proxy
         run: |
           set -euo pipefail
           body=$(curl -fsS --proxy "${{ steps.xk.outputs.socks-proxy }}" http://127.0.0.1:18080/target.txt)
           echo "body: $body"
-          test "$body" = "ok-through-the-tunnel"
+          echo "$body" | grep -q '^ok-through-the-tunnel GET /target.txt'
 
       - name: Second instance that exports the proxy environment
         id: xk-env
@@ -158,7 +177,8 @@ jobs:
         with:
           subscription: http://127.0.0.1:18080/sub.txt
           test-url: http://127.0.0.1:18080/target.txt
-          port: 10810
+          port: 10820
+          socks-port: 10821
           export-env: true
 
       - name: The following steps inherit the proxy
@@ -171,6 +191,7 @@ jobs:
           env | grep -i '_proxy=' | sort
           test -n "${HTTPS_PROXY:-}"
           test "${HTTPS_PROXY}" = "${{ steps.xk-env.outputs.proxy }}"
+          test "${ALL_PROXY}" = "${{ steps.xk-env.outputs.socks-proxy }}"
           # NO_PROXY keeps loopback direct, so hit an external endpoint here.
           curl -fsS -m 30 https://api.ipify.org && echo
 
