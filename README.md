@@ -128,6 +128,21 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 | `valid-file` | Path of the working links. |
 | `log-file` | Path of the proxy log. |
 
+## Supported runners
+
+| Runner | `process.platform/arch` | Release asset | Tested in CI |
+| --- | --- | --- | --- |
+| `ubuntu-latest` / `ubuntu-22.04` / `ubuntu-24.04` | `linux/x64` | `Xray-knife-linux-64.zip` | ✅ native |
+| `ubuntu-24.04-arm` | `linux/arm64` | `Xray-knife-linux-arm64-v8a.zip` | ✅ native |
+| `windows-latest` / `windows-2022` | `win32/x64` | `Xray-knife-windows-64.zip` | ✅ native |
+| `macos-latest` | `darwin/arm64` | `Xray-knife-macos-arm64-v8a.zip` | ✅ native |
+| `macos-13` | `darwin/x64` | `Xray-knife-macos-64.zip` | mapping only |
+| Linux `armv7` | `linux/arm` | `Xray-knife-linux-arm32-v7a.zip` | mapping only |
+| Windows on Arm | `win32/arm64` | `Xray-knife-windows-arm64-v8a.zip` | mapping only |
+
+"mapping only" means `src/platform.js` resolves the right upstream asset, but no CI runner of
+that architecture was available. Unknown platforms fail loudly with the list of supported ones.
+
 ## Notes
 
 - **Secrets.** Always pass the subscription through `secrets`; the action registers it with `::add-mask::`.
@@ -148,11 +163,13 @@ The action is plain Node.js with no dependencies and no build step:
 
 ```bash
 node --check src/index.js
-node --check src/cleanup.js
+node --check src/platform.js
+node test/assets.test.js      # runner platform -> release asset mapping
 ```
 
-`npm test` style unit tests are intentionally absent; `.github/workflows/test.yml` runs a real end-to-end
-test against a local Xray server it starts itself, so no external subscription is needed.
+The rest of `.github/workflows/test.yml` runs real end-to-end tests: an install job on native
+`linux/x64`, `linux/arm64` (Arm64 runner), `win32/x64` and `darwin/arm64`, plus an end-to-end test
+against a local Xray server it starts itself, so no external subscription is needed.
 
 To exercise **your own** subscription, add a repository secret named `SUBSCRIPTION_URL` and run the
 `Test` workflow manually from the Actions tab: the `real subscription` job will import it, test it and

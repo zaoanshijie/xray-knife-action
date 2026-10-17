@@ -14,6 +14,7 @@ const os = require('os');
 const path = require('path');
 const net = require('net');
 const { spawn, spawnSync } = require('child_process');
+const { resolveAsset } = require('./platform');
 
 const UPSTREAM = 'lilendian0x00/xray-knife';
 const BIN_NAME = process.platform === 'win32' ? 'xray-knife.exe' : 'xray-knife';
@@ -157,20 +158,7 @@ function sleepSync(ms) {
 // ---------------------------------------------------------------------------
 
 function assetName() {
-  const platform = process.platform;
-  const arch = process.arch;
-  const table = {
-    'linux-x64': 'Xray-knife-linux-64.zip',
-    'linux-arm64': 'Xray-knife-linux-arm64-v8a.zip',
-    'linux-arm': 'Xray-knife-linux-arm32-v7a.zip',
-    'darwin-x64': 'Xray-knife-macos-64.zip',
-    'darwin-arm64': 'Xray-knife-macos-arm64-v8a.zip',
-    'win32-x64': 'Xray-knife-windows-64.zip',
-    'win32-arm64': 'Xray-knife-windows-arm64-v8a.zip',
-  };
-  const asset = table[`${platform}-${arch}`];
-  if (!asset) throw new Error(`unsupported runner platform: ${platform}/${arch}`);
-  return asset;
+  return resolveAsset(process.platform, process.arch);
 }
 
 function releaseUrl(version, asset) {
@@ -245,6 +233,7 @@ function install() {
   fs.mkdirSync(root, { recursive: true });
 
   describe(`Install xray-knife ${requested} (${asset})`);
+  log(`Runner: ${process.platform}/${process.arch} -> ${asset}`);
   log(`Downloading ${url}`);
   download(url, archive);
   extract(archive, destination);
