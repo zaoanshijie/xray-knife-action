@@ -146,3 +146,36 @@ jobs:
           test "${HTTPS_PROXY}" = "${{ steps.xk-env.outputs.proxy }}"
           # NO_PROXY keeps loopback direct, so hit an external endpoint here.
           curl -fsS -m 30 https://api.ipify.org && echo
+
+  # Runs your own subscription when the repository has a SUBSCRIPTION_URL
+  # secret. Trigger it manually from the Actions tab.
+  real-subscription:
+    name: real subscription
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    env:
+      SUBSCRIPTION_URL: ${{ secrets.SUBSCRIPTION_URL }}
+    steps:
+      - name: Explain how to enable this job
+        if: env.SUBSCRIPTION_URL == ''
+        run: |
+          echo "::notice::Add a SUBSCRIPTION_URL secret to run this job against a real subscription."
+
+      - uses: actions/checkout@v4
+        if: env.SUBSCRIPTION_URL != ''
+
+      - name: Import the subscription and start the proxy
+        id: net
+        if: env.SUBSCRIPTION_URL != ''
+        uses: ./
+        with:
+          subscription: ${{ env.SUBSCRIPTION_URL }}
+          max-passed: 5
+          max-delay: 5000
+
+      - name: Show the egress IP through the proxy
+        if: env.SUBSCRIPTION_URL != ''
+        run: |
+          set -euo pipefail
+          echo "working nodes: ${{ steps.net.outputs.valid-nodes }} / ${{ steps.net.outputs.total-nodes }}"
+          curl -fsS -m 30 -x "${{ steps.net.outputs.proxy }}" https://api.ipify.org && echo

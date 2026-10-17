@@ -133,7 +133,8 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 - **Secrets.** Always pass the subscription through `secrets`; the action registers it with `::add-mask::`.
   Node links are never printed: on failure only the listener lines of the proxy log are shown.
 - **Runner support.** Linux (x64/arm64/armv7), macOS (Intel/Apple Silicon) and Windows (x64/arm64) are
-  covered by the upstream release assets. The action itself needs `node20`, which GitHub-hosted runners have.
+  covered by the upstream release assets. The action itself runs on `node24`, which GitHub-hosted
+  runners provide.
 - **Test cost.** Testing is the slow part: roughly `max-delay` × list size / `threads`. On huge
   subscriptions set `max-passed: 5` to stop as soon as enough nodes work.
 - **Self-hosted runners.** The proxy is detached and killed by the post step. If a job is hard-cancelled the
@@ -152,6 +153,10 @@ node --check src/cleanup.js
 
 `npm test` style unit tests are intentionally absent; `.github/workflows/test.yml` runs a real end-to-end
 test against a local Xray server it starts itself, so no external subscription is needed.
+
+To exercise **your own** subscription, add a repository secret named `SUBSCRIPTION_URL` and run the
+`Test` workflow manually from the Actions tab: the `real subscription` job will import it, test it and
+print the egress IP through the proxy.
 
 ## 中文说明
 
