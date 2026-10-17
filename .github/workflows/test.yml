@@ -1,0 +1,143 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xray-knife only
+        id: xk
+        uses: ./
+        with:
+          version: latest
+
+      - name: Check the CLI is usable from PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          xray-knife --version
+          echo "version output: ${{ steps.xk.outputs.version }}"
+          test -n "${{ steps.xk.outputs.version }}"
+          test -f "${{ steps.xk.outputs.xray-knife-path }}"
+
+  e2e:
+    name: end-to-end (local xray server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start a local Xray server
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o /tmp/xray.zip \
+            https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          mkdir -p /tmp/xray
+          unzip -q -o /tmp/xray.zip -d /tmp/xray
+          chmod +x /tmp/xray/xray
+          cat > /tmp/xray/server.json <<'EOF'
+          {
+            "log": { "loglevel": "warning" },
+            "inbounds": [
+              {
+                "listen": "127.0.0.1",
+                "port": 20000,
+                "protocol": "vless",
+                "settings": {
+                  "clients": [{ "id": "b831381d-6324-4d53-ad4f-8cda48b30811" }],
+                  "decryption": "none"
+                }
+              }
+            ],
+            "outbounds": [{ "protocol": "freedom" }]
+          }
+          EOF
+          nohup /tmp/xray/xray run -c /tmp/xray/server.json > /tmp/xray/server.log 2>&1 &
+          for _ in $(seq 1 20); do
+            ss -ltn 2>/dev/null | grep -q ':20000 ' && break
+            sleep 0.5
+          done
+          ss -ltn | grep ':20000 ' || { cat /tmp/xray/server.log; exit 1; }
+
+      - name: Serve a subscription and a target page
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sub
+          printf '%s' 'vless://b831381d-6324-4d53-ad4f-8cda48b30811@127.0.0.1:20000?encryption=none&security=none&type=tcp#ci-node' \
+            | base64 -w0 > /tmp/sub/sub.txt
+          printf 'ok-through-the-tunnel\n' > /tmp/sub/target.txt
+          (cd /tmp/sub && nohup python3 -m http.server 18080 >/dev/null 2>&1 &)
+          for _ in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:18080/target.txt && break
+            sleep 0.5
+          done
+
+      - name: Run the action
+        id: xk
+        uses: ./
+        with:
+          subscription: http://127.0.0.1:18080/sub.txt
+          test-url: http://127.0.0.1:18080/target.txt
+          port: 10809
+          max-delay: 5000
+
+      - name: Assert outputs
+        run: |
+          set -euo pipefail
+          echo "version      = ${{ steps.xk.outputs.version }}"
+          echo "total-nodes  = ${{ steps.xk.outputs.total-nodes }}"
+          echo "valid-nodes  = ${{ steps.xk.outputs.valid-nodes }}"
+          echo "proxy        = ${{ steps.xk.outputs.proxy }}"
+          echo "socks        = ${{ steps.xk.outputs.socks-proxy }}"
+          echo "pid          = ${{ steps.xk.outputs.pid }}"
+          test "${{ steps.xk.outputs.total-nodes }}" = "1"
+          test "${{ steps.xk.outputs.valid-nodes }}" = "1"
+          test "${{ steps.xk.outputs.proxy-available }}" = "true"
+          test -s "${{ steps.xk.outputs.valid-file }}"
+
+      - name: Use the HTTP proxy
+        run: |
+          set -euo pipefail
+          body=$(curl -fsS --proxy "${{ steps.xk.outputs.proxy }}" http://127.0.0.1:18080/target.txt)
+          echo "body: $body"
+          test "$body" = "ok-through-the-tunnel"
+
+      - name: Use the SOCKS5 proxy
+        run: |
+          set -euo pipefail
+          body=$(curl -fsS --proxy "${{ steps.xk.outputs.socks-proxy }}" http://127.0.0.1:18080/target.txt)
+          echo "body: $body"
+          test "$body" = "ok-through-the-tunnel"
+
+      - name: Second instance that exports the proxy environment
+        id: xk-env
+        uses: ./
+        with:
+          subscription: http://127.0.0.1:18080/sub.txt
+          test-url: http://127.0.0.1:18080/target.txt
+          port: 10810
+          export-env: true
+
+      - name: The following steps inherit the proxy
+        run: |
+          set -euo pipefail
+          env | grep -i _proxy | sort
+          test -n "${HTTPS_PROXY}"
+          # NO_PROXY keeps loopback direct, so hit an external endpoint here.
+          curl -fsS -m 30 https://api.ipify.org && echo

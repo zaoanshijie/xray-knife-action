@@ -1,0 +1,141 @@
+name: 'Xray Knife Subscription Proxy'
+description: >-
+  Install xray-knife from its official prebuilt releases, import a subscription
+  link, test every node, and expose a working node as a local HTTP/SOCKS5 proxy
+  (plus CLI, outputs and env vars) for the following steps of your workflow.
+author: 'zaoanshijie'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  subscription:
+    description: >-
+      Subscription URL (http:// or https://). Plain-link lists and base64-encoded
+      lists are both supported. Leave empty to only install the xray-knife CLI.
+    required: false
+    default: ''
+
+  version:
+    description: >-
+      xray-knife release to install: "latest" or a pinned tag such as "v11.4.0"
+      or "11.4.0".
+    required: false
+    default: 'latest'
+
+  user-agent:
+    description: 'Custom User-Agent used when fetching the subscription.'
+    required: false
+    default: ''
+
+  fetch-proxy:
+    description: >-
+      Optional proxy used only while downloading the subscription
+      (e.g. http://127.0.0.1:10809). Ignored when empty.
+    required: false
+    default: ''
+
+  test:
+    description: >-
+      Test the imported nodes for real latency and drop the dead ones before
+      starting the proxy.
+    required: false
+    default: 'true'
+
+  test-url:
+    description: 'URL fetched through each node to decide whether it works.'
+    required: false
+    default: 'https://cloudflare.com/cdn-cgi/trace'
+
+  max-delay:
+    description: 'Nodes slower than this (milliseconds) are treated as dead.'
+    required: false
+    default: '3000'
+
+  threads:
+    description: 'How many nodes are tested concurrently.'
+    required: false
+    default: '50'
+
+  max-passed:
+    description: >-
+      Stop testing once N working nodes were found (0 = test the whole list).
+      A small value makes huge subscriptions finish fast.
+    required: false
+    default: '0'
+
+  retries:
+    description: 'Retries per node before it is marked as dead.'
+    required: false
+    default: '0'
+
+  start-proxy:
+    description: >-
+      Start a local proxy backed by the best working node(s) and keep it alive
+      for the rest of the job.
+    required: false
+    default: 'true'
+
+  port:
+    description: 'Local listen port of the proxy. Serves HTTP and SOCKS5 on the same port.'
+    required: false
+    default: '10809'
+
+  rotate:
+    description: 'Seconds between automatic node rotations (0 = rotate only on health-check failure).'
+    required: false
+    default: '0'
+
+  start-timeout:
+    description: 'Seconds to wait for the local proxy to accept connections.'
+    required: false
+    default: '60'
+
+  export-env:
+    description: >-
+      Export HTTP_PROXY / HTTPS_PROXY / ALL_PROXY to the job environment so every
+      following step uses the proxy automatically.
+    required: false
+    default: 'false'
+
+  allow-empty:
+    description: >-
+      Do not fail when the subscription yields no working node (the job keeps
+      running without a proxy).
+    required: false
+    default: 'false'
+
+  workdir:
+    description: 'Directory that receives configs.txt / valid.txt and the proxy log.'
+    required: false
+    default: ''
+
+outputs:
+  version:
+    description: 'Installed xray-knife version, e.g. 11.4.0.'
+  xray-knife-path:
+    description: 'Absolute path of the installed xray-knife binary.'
+  total-nodes:
+    description: 'Number of config links imported from the subscription.'
+  valid-nodes:
+    description: 'Number of nodes that passed the test.'
+  proxy:
+    description: 'HTTP proxy URL, e.g. http://127.0.0.1:10809.'
+  socks-proxy:
+    description: 'SOCKS5 proxy URL, e.g. socks5://127.0.0.1:10809.'
+  proxy-available:
+    description: '"true" when a working proxy was started, otherwise "false".'
+  pid:
+    description: 'Process id of the proxy (stopped automatically at the end of the job).'
+  configs-file:
+    description: 'Absolute path of the imported subscription links.'
+  valid-file:
+    description: 'Absolute path of the working nodes, as written by xray-knife.'
+  log-file:
+    description: 'Absolute path of the proxy log.'
+
+runs:
+  using: 'node20'
+  main: 'src/index.js'
+  post: 'src/cleanup.js'
+  post-if: 'always()'
