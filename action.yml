@@ -135,7 +135,7 @@ outputs:
     description: 'Absolute path of the proxy log.'
 
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'src/index.js'
   post: 'src/cleanup.js'
   post-if: 'always()'

@@ -137,7 +137,12 @@ jobs:
       - name: The following steps inherit the proxy
         run: |
           set -euo pipefail
-          env | grep -i _proxy | sort
-          test -n "${HTTPS_PROXY}"
+          if ! env | grep -qi '_proxy='; then
+            echo "no proxy environment variable was exported"
+            exit 1
+          fi
+          env | grep -i '_proxy=' | sort
+          test -n "${HTTPS_PROXY:-}"
+          test "${HTTPS_PROXY}" = "${{ steps.xk-env.outputs.proxy }}"
           # NO_PROXY keeps loopback direct, so hit an external endpoint here.
           curl -fsS -m 30 https://api.ipify.org && echo

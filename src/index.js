@@ -23,7 +23,15 @@ const BIN_NAME = process.platform === 'win32' ? 'xray-knife.exe' : 'xray-knife';
 // ---------------------------------------------------------------------------
 
 function getInput(name) {
-  return (process.env['INPUT_' + name.replace(/[ -]/g, '_').toUpperCase()] || '').trim();
+  // GitHub exposes inputs as INPUT_<UPPERCASED NAME>. Spaces become
+  // underscores, but hyphens are kept, so "test-url" arrives as
+  // INPUT_TEST-URL. Accept both spellings so local runs (where a hyphen in an
+  // env var name is impractical) behave identically.
+  const upper = name.toUpperCase();
+  for (const key of [`INPUT_${upper}`, `INPUT_${upper.replace(/[ -]/g, '_')}`]) {
+    if (process.env[key] !== undefined) return String(process.env[key]).trim();
+  }
+  return '';
 }
 
 function getBoolInput(name, fallback) {
