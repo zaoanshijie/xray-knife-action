@@ -421,9 +421,14 @@ async function startProxy(binary, poolFile, httpPort, socksPort, workdir) {
   if (socksPort !== httpPort) await assertPortFree(socksPort, 'SOCKS5 listener');
 
   // 1. xray-knife's own listener: SOCKS5, no credentials.
+  const core = (getInput('core') || 'xray').toLowerCase();
+  if (!['xray', 'sing-box'].includes(core)) {
+    throw new Error(`input "core" must be "xray" or "sing-box", got "${core}"`);
+  }
   const xrayArgs = [
     'proxy', 'inbound',
     '-f', poolFile,
+    '--core', core,
     '--inbound-config', `socks://127.0.0.1:${socksPort}#listener`,
     '--rotate', String(intInput('rotate', 0)),
   ];

@@ -76,6 +76,14 @@ inputs:
     required: false
     default: 'true'
 
+  core:
+    description: >-
+      Core used by the local proxy: "xray" (default) or "sing-box". sing-box
+      handles node types xray-core cannot run (hysteria2, tuic, …). The HTTP
+      relay works with either.
+    required: false
+    default: 'xray'
+
   port:
     description: >-
       Listen port of the HTTP proxy. The HTTP front-end is a small relay that

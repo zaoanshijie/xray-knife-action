@@ -127,6 +127,7 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 | `max-passed` | `0` | Stop after N working nodes (`0` = test everything). |
 | `retries` | `0` | Retries per node. |
 | `start-proxy` | `true` | Start the local proxy and keep it for the rest of the job. |
+| `core` | `xray` | `xray` or `sing-box`. sing-box runs node types xray-core cannot (hysteria2, tuic, …). |
 | `port` | `10809` | HTTP proxy port (the relay). |
 | `socks-port` | `0` | SOCKS5 port; `0` means `port + 1`. |
 | `rotate` | `0` | Seconds between rotations (`0` = rotate only on health-check failure). |

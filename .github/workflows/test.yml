@@ -195,6 +195,26 @@ jobs:
           # NO_PROXY keeps loopback direct, so hit an external endpoint here.
           curl -fsS -m 30 https://api.ipify.org && echo
 
+      # sing-box does not answer HTTP on its socks listener at all; this proves
+      # the relay is what makes HTTP work, not the core.
+      - name: sing-box core behind the same HTTP relay
+        id: xk-singbox
+        uses: ./
+        with:
+          subscription: http://127.0.0.1:18080/sub.txt
+          test-url: http://127.0.0.1:18080/target.txt
+          port: 10830
+          socks-port: 10831
+          core: sing-box
+
+      - name: Use the sing-box backed HTTP proxy
+        run: |
+          set -euo pipefail
+          body=$(curl -fsS --proxy "${{ steps.xk-singbox.outputs.proxy }}" http://127.0.0.1:18080/target.txt)
+          echo "body: $body"
+          echo "$body" | grep -q '^ok-through-the-tunnel GET /target.txt'
+          curl -fsS -m 30 --proxy "${{ steps.xk-singbox.outputs.proxy }}" https://api.ipify.org && echo
+
   # Runs your own subscription when the repository has a SUBSCRIPTION_URL
   # secret. Trigger it manually from the Actions tab.
   real-subscription:
