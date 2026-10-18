@@ -158,14 +158,14 @@ jobs:
       - name: Use the HTTP proxy (plain http)
         run: |
           set -euo pipefail
-          body=$(curl -fsS --proxy "${{ steps.xk.outputs.proxy }}" http://127.0.0.1:18080/target.txt)
+          body=$(curl -fsS --noproxy "" --proxy "${{ steps.xk.outputs.proxy }}" http://127.0.0.1:18080/target.txt)
           echo "body: $body"
           echo "$body" | grep -q '^ok-through-the-tunnel GET /target.txt'
 
       - name: Use the HTTP proxy (POST body)
         run: |
           set -euo pipefail
-          body=$(curl -fsS --proxy "${{ steps.xk.outputs.proxy }}" -X POST -d 'ping=1' http://127.0.0.1:18080/echo)
+          body=$(curl -fsS --noproxy "" --proxy "${{ steps.xk.outputs.proxy }}" -X POST -d 'ping=1' http://127.0.0.1:18080/echo)
           echo "body: $body"
           echo "$body" | grep -q '^ok-through-the-tunnel POST /echo body=6'
 
@@ -177,7 +177,7 @@ jobs:
       - name: Use the SOCKS5 proxy
         run: |
           set -euo pipefail
-          body=$(curl -fsS --proxy "${{ steps.xk.outputs.socks-proxy }}" http://127.0.0.1:18080/target.txt)
+          body=$(curl -fsS --noproxy "" --proxy "${{ steps.xk.outputs.socks-proxy }}" http://127.0.0.1:18080/target.txt)
           echo "body: $body"
           echo "$body" | grep -q '^ok-through-the-tunnel GET /target.txt'
 
@@ -197,9 +197,13 @@ jobs:
           set -euo pipefail
           echo "http.proxy  = $(git config --global --get http.proxy)"
           echo "https.proxy = $(git config --global --get https.proxy)"
+          echo "NO_PROXY    = ${NO_PROXY:-<unset>}"
           test "$(git config --global --get http.proxy)" = "http://127.0.0.1:10840"
           test "$(git config --global --get https.proxy)" = "http://127.0.0.1:10840"
           test "${{ steps.xk-git.outputs.git-proxy }}" = "http://127.0.0.1:10840"
+          # git-proxy alone must still publish the loopback bypass list.
+          echo "${NO_PROXY}" | grep -q '127.0.0.1'
+          test "${{ steps.xk-git.outputs.no-proxy }}" = "localhost,127.0.0.1,::1"
 
       - name: git really goes through the proxy
         run: |
@@ -210,6 +214,34 @@ jobs:
           # CONNECT to our relay, then a tunnel to github: the request did not go direct.
           grep -q "CONNECT github.com:443" /tmp/git-trace.log
           grep -q "port 10840" /tmp/git-trace.log
+
+      # no-proxy: hosts listed there must skip the tunnel even though git is
+      # configured to use it.
+      - name: Instance that lets github.com bypass the proxy
+        id: xk-bypass
+        uses: ./
+        with:
+          subscription: http://127.0.0.1:18080/sub.txt
+          test-url: http://127.0.0.1:18080/target.txt
+          port: 10850
+          socks-port: 10851
+          git-proxy: true
+          no-proxy: github.com, .internal.example
+
+      - name: no-proxy hosts really bypass the proxy
+        run: |
+          set -euo pipefail
+          echo "NO_PROXY = $NO_PROXY"
+          echo "output   = ${{ steps.xk-bypass.outputs.no-proxy }}"
+          test "${{ steps.xk-bypass.outputs.no-proxy }}" = "localhost,127.0.0.1,::1,github.com,.internal.example"
+          test "$(git config --global --get http.proxy)" = "http://127.0.0.1:10850"
+          GIT_TRACE_CURL=1 git ls-remote https://github.com/zaoanshijie/xray-knife-action HEAD 2>/tmp/bypass.log
+          if grep -q "port 10850" /tmp/bypass.log; then
+            echo "git used the proxy although github.com is in NO_PROXY"
+            grep -E "port 10850|CONNECT" /tmp/bypass.log | head -5
+            exit 1
+          fi
+          echo "no proxy hop for github.com, as configured"
 
       - name: Second instance that exports the proxy environment
         id: xk-env
@@ -250,7 +282,7 @@ jobs:
       - name: Use the sing-box backed HTTP proxy
         run: |
           set -euo pipefail
-          body=$(curl -fsS --proxy "${{ steps.xk-singbox.outputs.proxy }}" http://127.0.0.1:18080/target.txt)
+          body=$(curl -fsS --noproxy "" --proxy "${{ steps.xk-singbox.outputs.proxy }}" http://127.0.0.1:18080/target.txt)
           echo "body: $body"
           echo "$body" | grep -q '^ok-through-the-tunnel GET /target.txt'
           curl -fsS -m 30 --proxy "${{ steps.xk-singbox.outputs.proxy }}" https://api.ipify.org && echo

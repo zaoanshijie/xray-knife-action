@@ -81,11 +81,17 @@ jobs:
         with:
           subscription: ${{ secrets.SUBSCRIPTION_URL }}
           export-env: true      # sets HTTP_PROXY / HTTPS_PROXY / ALL_PROXY for later steps
+          no-proxy: >-          # extra hosts that must stay direct
+            .corp.example, registry.npmjs.org
 
       - run: curl -fsS https://api.ipify.org
 ```
 
-`NO_PROXY` is set to `localhost,127.0.0.1,::1` so loopback traffic never enters the tunnel.
+`NO_PROXY` always contains `localhost,127.0.0.1,::1` (the proxy itself lives there), plus whatever
+`no-proxy` adds, plus anything the step already had. The final value is exported as the `no-proxy` output.
+
+If a host in `NO_PROXY` is also reachable directly by a *later* `curl --proxy ...`, curl will bypass the proxy
+— pass `--noproxy ""` when you want to force a request through the tunnel regardless.
 
 ### git clone / fetch / submodules
 
@@ -157,6 +163,7 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 | `start-timeout` | `60` | Seconds to wait for the listener. |
 | `export-env` | `false` | Export `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` (and lowercase variants). |
 | `git-proxy` | `false` | Set `git config --global http.proxy` / `https.proxy`. `true` uses this action's HTTP proxy; a URL (e.g. `socks5h://127.0.0.1:10810`) uses that instead. Restored when the job ends. |
+| `no-proxy` | `''` | Extra hosts to bypass the proxy, appended to `localhost,127.0.0.1,::1` and exported as `NO_PROXY` (git honours it too). Comma/space separated; curl syntax like `.corp.example` or `*` works. |
 | `allow-empty` | `false` | Do not fail when no working node is found. |
 | `workdir` | workspace | Where `configs.txt`, `valid.txt` and the proxy log are written. |
 
@@ -171,6 +178,7 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 | `proxy` | `http://127.0.0.1:<port>` (HTTP relay). |
 | `socks-proxy` | `socks5://127.0.0.1:<socks-port>`. |
 | `git-proxy` | Proxy URL git was configured with (only when `git-proxy` is enabled). |
+| `no-proxy` | Final `NO_PROXY` value: built-in loopback hosts + `no-proxy` input + inherited entries. |
 | `proxy-available` | `true` / `false`. |
 | `pid` | xray-knife SOCKS5 listener process id. |
 | `relay-pid` | HTTP relay process id. |

@@ -19,6 +19,9 @@ const { resolveAsset } = require('./platform');
 const UPSTREAM = 'lilendian0x00/xray-knife';
 const BIN_NAME = process.platform === 'win32' ? 'xray-knife.exe' : 'xray-knife';
 
+// Loopback must never enter the tunnel: the proxy itself lives there.
+const DEFAULT_NO_PROXY = ['localhost', '127.0.0.1', '::1'];
+
 // ---------------------------------------------------------------------------
 // GitHub Actions plumbing (no @actions/core)
 // ---------------------------------------------------------------------------
@@ -384,9 +387,11 @@ function waitForPort(port, timeoutMs) {
 }
 
 function curlThroughProxy(proxyUrl, targetUrl) {
+  // --noproxy "" forces the proxy even when NO_PROXY lists the target host,
+  // otherwise a health check against 127.0.0.1 would silently go direct.
   const result = spawnSync(
     'curl',
-    ['-fsS', '-m', '20', '--proxy', proxyUrl, '-o', os.devNull, '-w', '%{http_code}', targetUrl],
+    ['-fsS', '-m', '20', '--proxy', proxyUrl, '--noproxy', '', '-o', os.devNull, '-w', '%{http_code}', targetUrl],
     { encoding: 'utf8' }
   );
   const code = (result.stdout || '').trim();
@@ -552,6 +557,32 @@ function gitProxySetting(fallbackUrl) {
   return raw;
 }
 
+/**
+ * NO_PROXY for the job: the loopback defaults, then whatever the "no-proxy"
+ * input adds, then anything NO_PROXY already carried in this step. Order is
+ * preserved and duplicates are dropped; entries use the usual curl syntax
+ * (".corp.example", "*", ...).
+ */
+function buildNoProxy() {
+  const entries = [...DEFAULT_NO_PROXY];
+
+  const extra = getInput('no-proxy');
+  if (extra) entries.push(...extra.split(/[,\s]+/));
+
+  const inherited = `${process.env.NO_PROXY || ''},${process.env.no_proxy || ''}`;
+  entries.push(...inherited.split(/[,\s]+/));
+
+  const seen = new Set();
+  const result = [];
+  for (const raw of entries) {
+    const value = raw.trim();
+    if (!value || seen.has(value.toLowerCase())) continue;
+    seen.add(value.toLowerCase());
+    result.push(value);
+  }
+  return result.join(',');
+}
+
 function configureGitProxy(url) {
   const previous = { http: gitConfigGet('http.proxy'), https: gitConfigGet('https.proxy') };
 
@@ -663,15 +694,28 @@ async function main() {
       setOutput('relay-log', started.relayLog);
       setOutput('proxy-available', 'true');
 
-      if (getBoolInput('export-env', false)) {
+      const noProxy = buildNoProxy();
+      setOutput('no-proxy', noProxy);
+
+      const exportEnv = getBoolInput('export-env', false);
+      const gitUrl = gitProxySetting(started.httpUrl);
+
+      if (exportEnv) {
         for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) setEnv(key, started.httpUrl);
         for (const key of ['ALL_PROXY', 'all_proxy']) setEnv(key, started.socksUrl);
-        setEnv('NO_PROXY', 'localhost,127.0.0.1,::1');
-        setEnv('no_proxy', 'localhost,127.0.0.1,::1');
-        log('Exported proxy environment variables for the following steps.');
+        log(`Exported proxy environment variables for the following steps (NO_PROXY=${noProxy}).`);
       }
 
-      const gitUrl = gitProxySetting(started.httpUrl);
+      // git goes through libcurl, which still honours NO_PROXY when
+      // http.proxy is configured, so a git-proxy setup needs the env variable
+      // too. "no-proxy" alone also exports it, since asking for a bypass list
+      // is meaningless without the variable.
+      if (exportEnv || gitUrl || getInput('no-proxy')) {
+        setEnv('NO_PROXY', noProxy);
+        setEnv('no_proxy', noProxy);
+        if (!exportEnv) log(`Exported NO_PROXY=${noProxy}.`);
+      }
+
       if (gitUrl) proxy.gitUrl = configureGitProxy(gitUrl) || '';
 
       notice(`Proxy ready: ${started.httpUrl} (HTTP) / ${started.socksUrl} (SOCKS5), ${valid} working node(s)`);
