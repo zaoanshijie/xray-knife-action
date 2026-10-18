@@ -164,14 +164,15 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 | `ubuntu-24.04-arm` | `linux/arm64` | `Xray-knife-linux-arm64-v8a.zip` | bundled | ✅ native |
 | `windows-latest` / `windows-2022` | `win32/x64` | `Xray-knife-windows-64.zip` | bundled | ✅ native |
 | Linux `armv7` | `linux/arm` | `Xray-knife-linux-arm32-v7a.zip` | bundled | mapping only |
-| `macos-latest` | `darwin/arm64` | `Xray-knife-macos-arm64-v8a.zip` | download | ✅ native |
-| `macos-13` | `darwin/x64` | `Xray-knife-macos-64.zip` | download | mapping only |
+| `macos-latest` | `darwin/arm64` | `Xray-knife-macos-arm64-v8a.zip` | download | not run |
+| `macos-13` | `darwin/x64` | `Xray-knife-macos-64.zip` | download | not run |
 | Windows on Arm | `win32/arm64` | `Xray-knife-windows-arm64-v8a.zip` | download | mapping only |
 
 "mapping only" means `src/platform.js` resolves the right asset and the archive name is covered by a unit
 test, but no CI runner of that architecture was available. Unknown platforms fail loudly with the list of
-supported ones. macOS archives are not vendored (they would double the repository size for a platform this
-action is rarely used on), so `darwin` runners download from the upstream release.
+supported ones. macOS archives are not vendored (they would nearly double the repository size for a platform
+this action is rarely used on), so `darwin` runners download from the upstream release — which is why macOS
+is not part of the offline CI matrix.
 
 ## Bundled binaries
 
