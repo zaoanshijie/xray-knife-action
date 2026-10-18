@@ -18,10 +18,13 @@ inputs:
 
   version:
     description: >-
-      xray-knife release to install: "latest" or a pinned tag such as "v11.4.0"
-      or "11.4.0".
+      "bundled" (default) installs the prebuilt archive committed to this
+      repository under vendor/ — no download, works on networks where GitHub
+      release downloads fail. Use "latest" or a tag such as "v11.4.0" to fetch
+      from the upstream releases instead. Platforms without a bundled archive
+      (macOS) fall back to downloading.
     required: false
-    default: 'latest'
+    default: 'bundled'
 
   user-agent:
     description: 'Custom User-Agent used when fetching the subscription.'

@@ -2,10 +2,10 @@
 
 A GitHub Action that turns a **subscription link** into a **working local proxy** for the rest of your workflow.
 
-It installs the official prebuilt [xray-knife](https://github.com/lilendian0x00/xray-knife) binary for the
-runner's OS/architecture, imports the subscription, tests every node for real latency, then starts a local
-proxy backed by a node that actually works. Everything is exposed through step outputs, so later steps can
-use it with `curl`, `git`, `npm`, or any HTTP client.
+It installs the official prebuilt [xray-knife](https://github.com/lilendian0x00/xray-knife) binary — shipped
+in this repository, so no download — for the runner's OS/architecture, imports the subscription, tests
+every node for real latency, then starts a local proxy backed by a node that actually works. Everything is
+exposed through step outputs, so later steps can use it with `curl`, `git`, `npm`, or any HTTP client.
 
 ```yaml
 - uses: zaoanshijie/xray-knife-action@v1
@@ -43,12 +43,16 @@ is reported as successful.
 A CI runner needs a specific, verified egress. A subscription contains hundreds of nodes, most of them dead.
 This action does the boring part in one step:
 
-1. download and install `xray-knife` from its official GitHub releases (no Go toolchain, no build);
+1. install `xray-knife` from the archive shipped in this repository (`vendor/`) — **no download**;
 2. `xray-knife subs fetch` the subscription into `configs.txt`;
 3. `xray-knife http` test each node and keep the working ones in `valid.txt`;
 4. `xray-knife proxy inbound` serve them on `127.0.0.1:<socks-port>` with health-check based failover;
 5. a small HTTP relay in front of that SOCKS5 listener on `127.0.0.1:<port>`;
 6. kill both processes when the job ends.
+
+Because the binary is bundled, the action itself needs no access to GitHub's release CDN — which is exactly
+the thing that tends to be blocked or flaky on the networks where you need a proxy in the first place.
+The subscription is still fetched by the runner, and that is what the proxy is for.
 
 ## Usage
 
@@ -86,9 +90,7 @@ jobs:
 ### Just the CLI (no proxy)
 
 ```yaml
-      - uses: zaoanshijie/xray-knife-action@v1
-        with:
-          version: v11.4.0
+      - uses: zaoanshijie/xray-knife-action@v1     # bundled binary, no download
 
       - run: |
           xray-knife --version
@@ -117,7 +119,7 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 | Input | Default | Description |
 | --- | --- | --- |
 | `subscription` | `''` | Subscription URL (`http://` / `https://`). Plain lists and base64 lists are both accepted. Empty = install only. |
-| `version` | `latest` | Release to install: `latest`, `v11.4.0` or `11.4.0`. |
+| `version` | `bundled` | `bundled` uses the archive committed to `vendor/` (no network). `latest` or a tag such as `v11.4.0` downloads from upstream instead. |
 | `user-agent` | `''` | User-Agent used to fetch the subscription (some panels require e.g. `clash`). |
 | `fetch-proxy` | `''` | Proxy used **only** for downloading the subscription. |
 | `test` | `true` | Test the nodes and drop dead ones. |
@@ -156,26 +158,38 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 
 ## Supported runners
 
-| Runner | `process.platform/arch` | Release asset | Tested in CI |
-| --- | --- | --- | --- |
-| `ubuntu-latest` / `ubuntu-22.04` / `ubuntu-24.04` | `linux/x64` | `Xray-knife-linux-64.zip` | ✅ native |
-| `ubuntu-24.04-arm` | `linux/arm64` | `Xray-knife-linux-arm64-v8a.zip` | ✅ native |
-| `windows-latest` / `windows-2022` | `win32/x64` | `Xray-knife-windows-64.zip` | ✅ native |
-| `macos-latest` | `darwin/arm64` | `Xray-knife-macos-arm64-v8a.zip` | ✅ native |
-| `macos-13` | `darwin/x64` | `Xray-knife-macos-64.zip` | mapping only |
-| Linux `armv7` | `linux/arm` | `Xray-knife-linux-arm32-v7a.zip` | mapping only |
-| Windows on Arm | `win32/arm64` | `Xray-knife-windows-arm64-v8a.zip` | mapping only |
+| Runner | `process.platform/arch` | Archive | Source | Tested in CI |
+| --- | --- | --- | --- | --- |
+| `ubuntu-latest` / `ubuntu-22.04` / `ubuntu-24.04` | `linux/x64` | `Xray-knife-linux-64.zip` | bundled | ✅ native |
+| `ubuntu-24.04-arm` | `linux/arm64` | `Xray-knife-linux-arm64-v8a.zip` | bundled | ✅ native |
+| `windows-latest` / `windows-2022` | `win32/x64` | `Xray-knife-windows-64.zip` | bundled | ✅ native |
+| Linux `armv7` | `linux/arm` | `Xray-knife-linux-arm32-v7a.zip` | bundled | mapping only |
+| `macos-latest` | `darwin/arm64` | `Xray-knife-macos-arm64-v8a.zip` | download | ✅ native |
+| `macos-13` | `darwin/x64` | `Xray-knife-macos-64.zip` | download | mapping only |
+| Windows on Arm | `win32/arm64` | `Xray-knife-windows-arm64-v8a.zip` | download | mapping only |
 
-"mapping only" means `src/platform.js` resolves the right upstream asset, but no CI runner of
-that architecture was available. Unknown platforms fail loudly with the list of supported ones.
+"mapping only" means `src/platform.js` resolves the right asset and the archive name is covered by a unit
+test, but no CI runner of that architecture was available. Unknown platforms fail loudly with the list of
+supported ones. macOS archives are not vendored (they would double the repository size for a platform this
+action is rarely used on), so `darwin` runners download from the upstream release.
+
+## Bundled binaries
+
+`vendor/` contains the official v11.4.0 archives for Linux x64 / arm64 / armv7 and Windows x64. Nothing is
+downloaded at runtime, so the action works even when `github.com/.../releases/download` is blocked or
+flaky — which is usually the case on the networks that need a proxy. See `vendor/README.md` for the
+provenance and for the commands that refresh them.
+
+The price is repository size (~92 MB): the runner fetches the action once per job, so on a very slow link
+that is heavier than a single 24 MB download. If your runners have good access to GitHub releases,
+`version: latest` keeps using the smaller, per-platform download.
 
 ## Notes
 
 - **Secrets.** Always pass the subscription through `secrets`; the action registers it with `::add-mask::`.
   Node links are never printed: on failure only the listener lines of the proxy log are shown.
-- **Runner support.** Linux (x64/arm64/armv7), macOS (Intel/Apple Silicon) and Windows (x64/arm64) are
-  covered by the upstream release assets. The action itself runs on `node24`, which GitHub-hosted
-  runners provide.
+- **Runner support.** Linux (x64/arm64/armv7) and Windows x64 run from the bundled archives; macOS
+  downloads from upstream. The action itself runs on `node24`, which GitHub-hosted runners provide.
 - **Test cost.** Testing is the slow part: roughly `max-delay` × list size / `threads`. On huge
   subscriptions set `max-passed: 5` to stop as soon as enough nodes work.
 - **Ports.** `port` (HTTP) and `socks-port` (SOCKS5) must be free; if something already listens there — for
@@ -222,8 +236,9 @@ print the egress IP through the proxy.
 - run: curl -fsS https://api.ipify.org
 ```
 
-它会：下载 xray-knife 官方预编译包 → 拉取订阅 → 逐节点测速 → 用可用节点在 `127.0.0.1:10810` 起 SOCKS5
-监听 → 再在其前面套一层内置 HTTP 中转，对外提供 `http://127.0.0.1:10809` → 作业结束时自动关闭两个进程。
+它会：直接用仓库内自带的 xray-knife 预编译包（`vendor/`，**不联网下载**）→ 拉取订阅 → 逐节点测速 → 用可用
+节点在 `127.0.0.1:10810` 起 SOCKS5 监听 → 再在其前面套一层内置 HTTP 中转，对外提供
+`http://127.0.0.1:10809` → 作业结束时自动关闭两个进程。
 HTTP 不依赖 xray-knife 内核是否顺手支持（sing-box 内核下它是不支持的），所以两个端口都可用。
 
 节点全部失效时会直接报错（可用 `allow-empty: true` 放宽）；端口被占用（比如本机已有 xray-knife 占用

@@ -52,11 +52,16 @@ jobs:
           node -e "console.log('node reports', process.platform, process.arch)"
           test "$(node -p process.arch)" = "${{ matrix.arch }}"
 
-      - name: Install xray-knife only
+      # A dead proxy makes any outbound HTTP call fail, so this step only passes
+      # when the binary came from the repository's own vendor/ directory.
+      - name: Install xray-knife (bundled, network blocked)
         id: xk
         uses: ./
-        with:
-          version: latest
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          http_proxy: http://127.0.0.1:9
+          https_proxy: http://127.0.0.1:9
 
       - name: Check the CLI is usable from PATH
         shell: bash
@@ -64,10 +69,17 @@ jobs:
           set -euo pipefail
           xray-knife --version
           echo "version output: ${{ steps.xk.outputs.version }}"
-          test -n "${{ steps.xk.outputs.version }}"
+          test "${{ steps.xk.outputs.version }}" = "11.4.0"
           test -f "${{ steps.xk.outputs.xray-knife-path }}"
           xray-knife http --help > /dev/null
           xray-knife proxy inbound --help > /dev/null
+
+      - name: Download path smoke test (best effort, needs GitHub releases)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        uses: ./
+        with:
+          version: latest
 
   e2e:
     name: end-to-end (local xray server)

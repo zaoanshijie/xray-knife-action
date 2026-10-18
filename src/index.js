@@ -223,22 +223,44 @@ function findBinary(directory) {
 }
 
 function install() {
-  const requested = getInput('version') || 'latest';
+  const requested = getInput('version') || 'bundled';
+  const useBundled = requested.toLowerCase() === 'bundled';
   const asset = assetName();
-  const url = releaseUrl(requested, asset);
   const root = path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'xray-knife-action');
-  const archive = path.join(root, asset);
-  const destination = path.join(root, requested.replace(/[^\w.-]/g, '_') || 'latest');
+  const destination = path.join(root, useBundled ? 'bundled' : requested.replace(/[^\w.-]/g, '_') || 'latest');
 
   fs.mkdirSync(root, { recursive: true });
 
-  describe(`Install xray-knife ${requested} (${asset})`);
+  describe(`Install xray-knife ${useBundled ? '(bundled)' : requested} (${asset})`);
   log(`Runner: ${process.platform}/${process.arch} -> ${asset}`);
-  log(`Downloading ${url}`);
-  download(url, archive);
-  extract(archive, destination);
 
-  const binary = findBinary(destination);
+  // Reuse an earlier extraction in the same job: no need to unpack 24 MB again.
+  let binary = fs.existsSync(path.join(destination, BIN_NAME)) ? path.join(destination, BIN_NAME) : null;
+
+  if (!binary) {
+    let archive;
+    if (useBundled) {
+      const bundled = path.join(__dirname, '..', 'vendor', asset);
+      if (fs.existsSync(bundled)) {
+        archive = bundled;
+        log(`Using the archive shipped with this action: vendor/${asset}`);
+      } else {
+        warn(`this action ships no archive for ${asset}; downloading from GitHub instead`);
+      }
+    }
+
+    if (!archive) {
+      const release = useBundled ? 'latest' : requested;
+      const url = releaseUrl(release, asset);
+      archive = path.join(root, asset);
+      log(`Downloading ${url}`);
+      download(url, archive);
+    }
+
+    extract(archive, destination);
+    binary = findBinary(destination);
+  }
+
   try {
     fs.chmodSync(binary, 0o755);
   } catch (error) {
