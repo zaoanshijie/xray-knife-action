@@ -692,6 +692,10 @@ async function main() {
     }
   }
 
+  if (gitProxySetting('http://placeholder') && !proxy.gitUrl) {
+    warn('"git-proxy" was requested but no proxy is running, so git was left untouched.');
+  }
+
   endSummary(version, total, valid, proxy.httpUrl, proxy.socksUrl, proxy.gitUrl);
 }
 
