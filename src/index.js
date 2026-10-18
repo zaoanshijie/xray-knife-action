@@ -531,6 +531,50 @@ function filteredLog(file, lines = 30) {
 }
 
 // ---------------------------------------------------------------------------
+// Git proxy
+// ---------------------------------------------------------------------------
+
+function gitConfigGet(key) {
+  const result = spawnSync('git', ['config', '--global', '--get', key], { encoding: 'utf8' });
+  return result.status === 0 ? (result.stdout || '').trim() : '';
+}
+
+/**
+ * "git-proxy" accepts a boolean or an explicit proxy URL. A boolean true means
+ * "use the proxy this action just started".
+ */
+function gitProxySetting(fallbackUrl) {
+  const raw = getInput('git-proxy');
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (['true', '1', 'yes', 'y', 'on'].includes(lower)) return fallbackUrl;
+  if (['false', '0', 'no', 'n', 'off'].includes(lower)) return null;
+  return raw;
+}
+
+function configureGitProxy(url) {
+  const previous = { http: gitConfigGet('http.proxy'), https: gitConfigGet('https.proxy') };
+
+  for (const key of ['http.proxy', 'https.proxy']) {
+    const result = spawnSync('git', ['config', '--global', key, url], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
+    });
+    if (result.status !== 0) {
+      warn(`could not point git at the proxy (${key}): ${firstLine(result.stderr) || `git exited with ${result.status}`}`);
+      return null;
+    }
+  }
+
+  saveState('git_proxy_set', '1');
+  saveState('git_proxy_prev_http', previous.http);
+  saveState('git_proxy_prev_https', previous.https);
+  setOutput('git-proxy', url);
+  log(`git now uses ${url} (http.proxy + https.proxy); the previous values are restored after the job`);
+  return url;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -591,7 +635,7 @@ async function main() {
 
   const shouldStartProxy = getBoolInput('start-proxy', true);
   const allowEmpty = getBoolInput('allow-empty', false);
-  const proxy = { httpUrl: '', socksUrl: '', pid: '', relayPid: '' };
+  const proxy = { httpUrl: '', socksUrl: '', pid: '', relayPid: '', gitUrl: '' };
 
   const httpPort = intInput('port', 10809);
   const socksPortInput = intInput('socks-port', 0);
@@ -627,17 +671,20 @@ async function main() {
         log('Exported proxy environment variables for the following steps.');
       }
 
+      const gitUrl = gitProxySetting(started.httpUrl);
+      if (gitUrl) proxy.gitUrl = configureGitProxy(gitUrl) || '';
+
       notice(`Proxy ready: ${started.httpUrl} (HTTP) / ${started.socksUrl} (SOCKS5), ${valid} working node(s)`);
     } catch (error) {
       setOutput('proxy-available', 'false');
-      endSummary(version, total, valid, '', '');
+      endSummary(version, total, valid, '', '', '');
       if (!allowEmpty) throw error;
       warn(`continuing without a proxy: ${error.message}`);
     }
   } else if (valid === 0) {
     warn('No working node was found, so no proxy was started.');
     if (!allowEmpty) {
-      endSummary(version, total, 0, '', '');
+      endSummary(version, total, 0, '', '', '');
       throw new Error(
         'none of the subscription nodes passed the test. ' +
           'Set "allow-empty: true" to continue anyway, raise "max-delay", or check the subscription.'
@@ -645,16 +692,17 @@ async function main() {
     }
   }
 
-  endSummary(version, total, valid, proxy.httpUrl, proxy.socksUrl);
+  endSummary(version, total, valid, proxy.httpUrl, proxy.socksUrl, proxy.gitUrl);
 }
 
-function endSummary(version, total, valid, httpUrl, socksUrl) {
+function endSummary(version, total, valid, httpUrl, socksUrl, gitUrl) {
   const rows = [
     ['xray-knife', `\`${version}\``],
     ['imported nodes', String(total)],
     ['working nodes', String(valid)],
     ['http proxy', httpUrl ? `\`${httpUrl}\`` : '_not started_'],
     ['socks5 proxy', socksUrl ? `\`${socksUrl}\`` : '_not started_'],
+    ['git proxy', gitUrl ? `\`${gitUrl}\`` : '_not configured_'],
   ];
   summary(
     ['### Xray Knife Subscription Proxy', '', '| item | value |', '| --- | --- |', ...rows.map(([k, v]) => `| ${k} | ${v} |`)].join('\n')

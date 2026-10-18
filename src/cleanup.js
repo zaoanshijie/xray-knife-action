@@ -65,3 +65,29 @@ for (const [label, rawPid] of targets) {
 }
 
 if (!handled) process.stdout.write('No proxy process was left running.\n');
+
+// Put git's proxy settings back the way they were. A self-hosted runner keeps
+// its ~/.gitconfig between jobs, so leaving http.proxy behind would silently
+// route unrelated clones through a proxy that no longer exists.
+if (process.env.STATE_git_proxy_set === '1') {
+  const keys = [
+    ['http.proxy', process.env.STATE_git_proxy_prev_http || ''],
+    ['https.proxy', process.env.STATE_git_proxy_prev_https || ''],
+  ];
+  let hadPrevious = false;
+  for (const [key, previous] of keys) {
+    if (previous) hadPrevious = true;
+    const args = previous
+      ? ['config', '--global', key, previous]
+      : ['config', '--global', '--unset-all', key];
+    const result = spawnSync('git', args, { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });
+    // `--unset-all` exits with 5 when the key was not set; that is fine.
+    if (result.status !== 0 && result.status !== 5) {
+      process.stdout.write(`::warning::could not restore git ${key}: ${(result.stderr || '').trim() || `exit ${result.status}`}\n`);
+    }
+  }
+  process.stdout.write(
+    hadPrevious ? 'Restored git proxy settings (previous values put back).\n' : 'Removed the git proxy settings.\n'
+  );
+}
+

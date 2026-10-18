@@ -181,6 +181,36 @@ jobs:
           echo "body: $body"
           echo "$body" | grep -q '^ok-through-the-tunnel GET /target.txt'
 
+      # git-proxy: the next steps must be able to clone without extra flags.
+      - name: Instance that configures git
+        id: xk-git
+        uses: ./
+        with:
+          subscription: http://127.0.0.1:18080/sub.txt
+          test-url: http://127.0.0.1:18080/target.txt
+          port: 10840
+          socks-port: 10841
+          git-proxy: true
+
+      - name: git is configured with the proxy
+        run: |
+          set -euo pipefail
+          echo "http.proxy  = $(git config --global --get http.proxy)"
+          echo "https.proxy = $(git config --global --get https.proxy)"
+          test "$(git config --global --get http.proxy)" = "http://127.0.0.1:10840"
+          test "$(git config --global --get https.proxy)" = "http://127.0.0.1:10840"
+          test "${{ steps.xk-git.outputs.git-proxy }}" = "http://127.0.0.1:10840"
+
+      - name: git really goes through the proxy
+        run: |
+          set -euo pipefail
+          GIT_TRACE_CURL=1 git ls-remote https://github.com/zaoanshijie/xray-knife-action HEAD 2>/tmp/git-trace.log
+          echo "--- proxy lines in the trace:"
+          grep -E "CONNECT github.com:443|port 10840" /tmp/git-trace.log | head -4
+          # CONNECT to our relay, then a tunnel to github: the request did not go direct.
+          grep -q "CONNECT github.com:443" /tmp/git-trace.log
+          grep -q "port 10840" /tmp/git-trace.log
+
       - name: Second instance that exports the proxy environment
         id: xk-env
         uses: ./

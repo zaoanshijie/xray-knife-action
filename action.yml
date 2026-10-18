@@ -118,6 +118,16 @@ inputs:
     required: false
     default: 'false'
 
+  git-proxy:
+    description: >-
+      Point git at the proxy ("git config --global http.proxy / https.proxy") so
+      later clone/fetch/submodule steps work without extra flags. Accepts a
+      boolean, or an explicit proxy URL to use instead of the one this action
+      started (e.g. socks5h://127.0.0.1:10810). The previous values are put back
+      when the job ends.
+    required: false
+    default: 'false'
+
   allow-empty:
     description: >-
       Do not fail when the subscription yields no working node (the job keeps
@@ -143,6 +153,8 @@ outputs:
     description: 'HTTP proxy URL, e.g. http://127.0.0.1:10809.'
   socks-proxy:
     description: 'SOCKS5 proxy URL, e.g. socks5://127.0.0.1:10810.'
+  git-proxy:
+    description: 'Proxy URL git was configured with, when git-proxy was enabled.'
   proxy-available:
     description: '"true" when a working proxy was started, otherwise "false".'
   pid:

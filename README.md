@@ -87,6 +87,27 @@ jobs:
 
 `NO_PROXY` is set to `localhost,127.0.0.1,::1` so loopback traffic never enters the tunnel.
 
+### git clone / fetch / submodules
+
+```yaml
+      - uses: zaoanshijie/xray-knife-action@v1
+        with:
+          subscription: ${{ secrets.SUBSCRIPTION_URL }}
+          git-proxy: true        # git config --global http.proxy + https.proxy
+
+      - run: git clone --depth 1 https://github.com/foo/bar
+```
+
+`git-proxy: true` uses the proxy this action started. You can also pass an explicit URL, which is handy for
+the SOCKS5 port, or to point git at a proxy you manage yourself:
+
+```yaml
+          git-proxy: socks5h://127.0.0.1:10810
+```
+
+Whatever was in the runner's global git config before is put back when the job ends, so nothing leaks into
+the next job on a self-hosted runner.
+
 ### Just the CLI (no proxy)
 
 ```yaml
@@ -135,6 +156,7 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 | `rotate` | `0` | Seconds between rotations (`0` = rotate only on health-check failure). |
 | `start-timeout` | `60` | Seconds to wait for the listener. |
 | `export-env` | `false` | Export `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` (and lowercase variants). |
+| `git-proxy` | `false` | Set `git config --global http.proxy` / `https.proxy`. `true` uses this action's HTTP proxy; a URL (e.g. `socks5h://127.0.0.1:10810`) uses that instead. Restored when the job ends. |
 | `allow-empty` | `false` | Do not fail when no working node is found. |
 | `workdir` | workspace | Where `configs.txt`, `valid.txt` and the proxy log are written. |
 
@@ -148,6 +170,7 @@ With no `subscription` the action only installs the binary and puts it on `PATH`
 | `valid-nodes` | Nodes that passed the test. |
 | `proxy` | `http://127.0.0.1:<port>` (HTTP relay). |
 | `socks-proxy` | `socks5://127.0.0.1:<socks-port>`. |
+| `git-proxy` | Proxy URL git was configured with (only when `git-proxy` is enabled). |
 | `proxy-available` | `true` / `false`. |
 | `pid` | xray-knife SOCKS5 listener process id. |
 | `relay-pid` | HTTP relay process id. |
