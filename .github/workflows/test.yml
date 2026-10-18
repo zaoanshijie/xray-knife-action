@@ -54,14 +54,15 @@ jobs:
 
       # A dead proxy makes any outbound HTTP call fail, so this step only passes
       # when the binary came from the repository's own vendor/ directory.
+      # (Keep one spelling per variable: GitHub's workflow parser treats env
+      # names case-insensitively and rejects HTTP_PROXY + http_proxy together.)
       - name: Install xray-knife (bundled, network blocked)
         id: xk
         uses: ./
         env:
           HTTP_PROXY: http://127.0.0.1:9
           HTTPS_PROXY: http://127.0.0.1:9
-          http_proxy: http://127.0.0.1:9
-          https_proxy: http://127.0.0.1:9
+          ALL_PROXY: socks5://127.0.0.1:9
 
       - name: Check the CLI is usable from PATH
         shell: bash
