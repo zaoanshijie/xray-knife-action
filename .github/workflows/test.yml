@@ -16,7 +16,7 @@ jobs:
     name: unit (platform mapping + socks encoding)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Syntax check
         run: |
           for file in src/index.js src/cleanup.js src/platform.js src/socks.js src/http-proxy.js; do
@@ -40,7 +40,7 @@ jobs:
           - os: windows-latest
             arch: x64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Assert the runner architecture
         shell: bash
@@ -82,17 +82,29 @@ jobs:
   e2e:
     name: end-to-end (local xray server)
     runs-on: ubuntu-latest
+    # Pinned on purpose: the fixture is a stand-in for "some node that works",
+    # not a test of Xray-core itself. Tracking "latest" made this job fail the
+    # week v26.10.21 shipped, for a change that has nothing to do with us.
+    # Bump it deliberately, then check the job still passes.
+    env:
+      XRAY_CORE_VERSION: v26.10.21
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Start a local Xray server
         run: |
           set -euo pipefail
           curl -fsSL --retry 3 -o /tmp/xray.zip \
-            https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+            "https://github.com/XTLS/Xray-core/releases/download/${XRAY_CORE_VERSION}/Xray-linux-64.zip"
           mkdir -p /tmp/xray
           unzip -q -o /tmp/xray.zip -d /tmp/xray
           chmod +x /tmp/xray/xray
+          # Xray-core >= v26.10.21 blackholes private destinations by default
+          # when the inbound is vless/vmess/trojan/shadowsocks ("final rules",
+          # SSRF protection): the tunnel establishes, then the reply never comes
+          # back and every node test ends as http-timeout. The explicit allow
+          # rule below is matched before that default block rule and keeps the
+          # loopback fixture reachable.
           cat > /tmp/xray/server.json <<'EOF'
           {
             "log": { "loglevel": "warning" },
@@ -107,7 +119,16 @@ jobs:
                 }
               }
             ],
-            "outbounds": [{ "protocol": "freedom" }]
+            "outbounds": [
+              {
+                "protocol": "freedom",
+                "settings": {
+                  "finalRules": [
+                    { "action": "allow", "ip": ["127.0.0.0/8", "::1/128"] }
+                  ]
+                }
+              }
+            ]
           }
           EOF
           nohup /tmp/xray/xray run -c /tmp/xray/server.json > /tmp/xray/server.log 2>&1 &
@@ -287,6 +308,16 @@ jobs:
           echo "$body" | grep -q '^ok-through-the-tunnel GET /target.txt'
           curl -fsS -m 30 --proxy "${{ steps.xk-singbox.outputs.proxy }}" https://api.ipify.org && echo
 
+      # A failed node test is silent on the fixture side, so dump the server
+      # log to make the next "0 of 1 configs passed" self-explanatory.
+      - name: Show the local Xray server log after a failure
+        if: failure()
+        run: |
+          echo "--- /tmp/xray/server.log ---"
+          tail -n 50 /tmp/xray/server.log || true
+          echo "--- /tmp/fixture.log ---"
+          tail -n 20 /tmp/fixture.log || true
+
   # Runs your own subscription when the repository has a SUBSCRIPTION_URL
   # secret. Trigger it manually from the Actions tab.
   real-subscription:
@@ -301,7 +332,7 @@ jobs:
         run: |
           echo "::notice::Add a SUBSCRIPTION_URL secret to run this job against a real subscription."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: env.SUBSCRIPTION_URL != ''
 
       - name: Import the subscription and start the proxy
